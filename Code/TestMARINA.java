@@ -8,7 +8,7 @@ import java.util.*;
 public class TestMARINA {
     public static void main(String[] args) {
         String vehicleTraceFile = "dataset/sample_vehicle_trace.csv"; 
-        String predictedFile = "dataset/predict_vehicle_metrics.csv"; 
+        String predictedFile = "dataset/predict_vehicle_metrics.csv";
 
         List<VehicleState> allVehicles = TraceLoader.loadVehicleTrace(vehicleTraceFile);
 
@@ -25,33 +25,39 @@ public class TestMARINA {
         List<VehicleState> activeRandomVehicles = new ArrayList<>();
 
         for (int time = 0; time <= maxTime; time++) {
-            System.out.println("\n=== Scheduling at time " + time + " ===");
+            System.out.println("\nScheduling at time " + time);
 
             List<VehicleState> vehicles = TraceLoader.getVehiclesAtTime(allVehicles, time);
+
+        
             for (VehicleState rv : activeRandomVehicles) {
                 rv.moveOneTick();
                 vehicles.add(rv);
             }
 
+        
             if (rnd.nextDouble() < 0.2) {
                 String newId = "RandVeh_" + time + "_" + rnd.nextInt(1000);
                 double x = rnd.nextDouble() * 500;
                 double y = rnd.nextDouble() * 500;
                 double speed = 5 + rnd.nextDouble() * 20;
                 double cpu = 50 + rnd.nextDouble() * 50;
-                VehicleState newVeh = new VehicleState(time, newId, x, y, speed, cpu, 100);
+                VehicleState newVeh = new VehicleState(time, newId, x, y, speed);
+
                 vehicles.add(newVeh);
                 activeRandomVehicles.add(newVeh);
                 System.out.println("New persistent random vehicle added: " + newId);
             }
+
             for (VehicleState v : vehicles) {
-                if (predicted.containsKey(v.getId())) {
-                    Map<Integer,double[]> preds = predicted.get(v.getId());
-                    if (preds.containsKey(1)) {
-                        double[] pr = preds.get(1);
-                        v.updatePrediction(pr[0], pr[1], pr[2], pr[3]);
-                    }
-                }
+            	if (predicted.containsKey(v.getId())) {
+            	    Map<Integer,double[]> preds = predicted.get(v.getId());
+            	    if (preds.containsKey(1)) {
+            	        double[] pr = preds.get(1);
+            	        v.updatePrediction(pr[0], pr[1], pr[2]);
+            	    }
+            	}
+
             }
 
             List<VehicularCloud> vcs = new ArrayList<>();
@@ -119,4 +125,3 @@ public class TestMARINA {
         return k - 1;
     }
 }
-

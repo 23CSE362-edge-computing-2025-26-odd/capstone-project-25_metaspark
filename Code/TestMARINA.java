@@ -7,16 +7,12 @@ import java.util.*;
 
 public class TestMARINA {
     public static void main(String[] args) {
-        String vehicleTraceFile = "dataset/sample_vehicle_trace.csv"; 
-        String predictedFile = "dataset/predict_vehicle_metrics.csv";
-
-        List<VehicleState> allVehicles = TraceLoader.loadVehicleTrace(vehicleTraceFile);
-
+        String combinedFile = "dataset/sample_vehicle_trace.csv"; 
+        List<VehicleState> allVehicles = TraceLoader.loadVehicleTrace(combinedFile);
         List<BaseStation> baseStations = new ArrayList<>();
         baseStations.add(new BaseStation("BS1", 100.0, 100.0, 50.0, 200.0, 250.0));
         baseStations.add(new BaseStation("BS2", 400.0, 300.0, 70.0, 300.0, 250.0));
-
-        Map<String, Map<Integer,double[]>> predicted = ResourcePredictor.loadPredictions(predictedFile);
+        Map<String, Map<Integer,double[]>> predicted = ResourcePredictor.loadPredictions(combinedFile);
 
         int maxTime = allVehicles.stream().mapToInt(VehicleState::getTime).max().orElse(0);
         double poissonLambda = 3.0;
@@ -25,46 +21,44 @@ public class TestMARINA {
         List<VehicleState> activeRandomVehicles = new ArrayList<>();
 
         for (int time = 0; time <= maxTime; time++) {
-            System.out.println("\nScheduling at time " + time);
+            System.out.println("\n=== Scheduling at time " + time + " ===");
 
             List<VehicleState> vehicles = TraceLoader.getVehiclesAtTime(allVehicles, time);
 
-        
             for (VehicleState rv : activeRandomVehicles) {
                 rv.moveOneTick();
                 vehicles.add(rv);
             }
 
-        
             if (rnd.nextDouble() < 0.2) {
-                String newId = "RandVeh_" + time + "_" + rnd.nextInt(1000);
+                String newId = "Veh_" + time + "_" + rnd.nextInt(1000);
                 double x = rnd.nextDouble() * 500;
                 double y = rnd.nextDouble() * 500;
                 double speed = 5 + rnd.nextDouble() * 20;
-                double cpu = 50 + rnd.nextDouble() * 50;
-                VehicleState newVeh = new VehicleState(time, newId, x, y, speed);
 
-                vehicles.add(newVeh);
+                VehicleState newVeh = new VehicleState(time, newId, x, y, speed);
                 activeRandomVehicles.add(newVeh);
+                vehicles.add(newVeh);
+
                 System.out.println("New persistent random vehicle added: " + newId);
             }
 
             for (VehicleState v : vehicles) {
-            	if (predicted.containsKey(v.getId())) {
-            	    Map<Integer,double[]> preds = predicted.get(v.getId());
-            	    if (preds.containsKey(1)) {
-            	        double[] pr = preds.get(1);
-            	        v.updatePrediction(pr[0], pr[1], pr[2]);
-            	    }
-            	}
-
+                if (predicted.containsKey(v.getId())) {
+                    Map<Integer,double[]> preds = predicted.get(v.getId());
+                    if (preds.containsKey(1)) {
+                        double[] pr = preds.get(1);
+                        v.updatePrediction(pr[0], pr[1], pr[2]);
+                    }
+                }
             }
+
 
             List<VehicularCloud> vcs = new ArrayList<>();
             for (BaseStation bs : baseStations) {
-                VehicularCloud vc = new VehicularCloud("VC_" + bs.getId(), bs, new ArrayList<>());
-                vcs.add(vc);
+                vcs.add(new VehicularCloud("VC_" + bs.getId(), bs, new ArrayList<>()));
             }
+
             for (VehicleState v : vehicles) {
                 BaseStation nearest = null;
                 double bestDist = Double.MAX_VALUE;
@@ -87,20 +81,30 @@ public class TestMARINA {
                     adHoc.getVehicles().add(v);
                     vcs.add(adHoc);
                 }
-            }
-
+   
             List<Task> tasks = new ArrayList<>();
-            int arrivals = poissonRandom(poissonLambda, rnd);
+            int arrivals = poissonRandom(poissonLambda, rnd); 
+
             for (int a = 0; a < arrivals; a++) {
                 if (vehicles.isEmpty()) break;
-                VehicleState origin = vehicles.get(rnd.nextInt(vehicles.size()));
+
+                VehicleState origin = vehicles.get(rnd.nextInt(vehicles.size())); 
                 String taskId = "Task_" + origin.getId() + "_t" + time + "_a" + a;
-                double size = 1 + rnd.nextDouble() * 9;
-                double cpu = Math.min(origin.getCpuCapacity() * 0.2, 100.0);
+
+                double size = 1 + rnd.nextDouble() * 9; 
+
+                double cpu;
+                if (rnd.nextBoolean()) {
+                    cpu = 4 + rnd.nextDouble();          
+                } else {
+                    cpu = 10 + rnd.nextDouble() * 20;   
+                }
+
                 double deadline = 3 + rnd.nextInt(5);
                 Task t = new Task(taskId, size, cpu, deadline, time);
                 tasks.add(t);
             }
+
             System.out.println("Generated " + tasks.size() + " tasks at time " + time);
 
             MARINAScheduler scheduler = new MARINAScheduler(vcs, baseStations);

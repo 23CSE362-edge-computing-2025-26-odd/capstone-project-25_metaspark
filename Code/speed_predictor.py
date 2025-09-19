@@ -1,14 +1,13 @@
-# speed_cpu_predictor.py
 import numpy as np
 import tensorflow as tf
 from sklearn.preprocessing import MinMaxScaler
-from tensorflow.keras.models import Sequential, load_model
+from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout
 
-class SpeedCPU_Predictor:
+class SpeedPredictor:
     def __init__(self, time_steps):
         self.time_steps = time_steps
-        self.num_features = 2  # Only 'speed' and 'cpu_capacity'
+        self.num_features = 1  # Only 'speed'
         self.scaler = MinMaxScaler(feature_range=(0, 1))
         self.model = self._create_lstm_model()
         self.is_trained = False
@@ -24,6 +23,7 @@ class SpeedCPU_Predictor:
         return model
 
     def train(self, data, epochs=15, batch_size=1, val_steps=5, verbose=1):
+        # data shape: (T, 1) for speed only
         T = len(data)
         if T <= self.time_steps + val_steps:
             return False
@@ -41,19 +41,17 @@ class SpeedCPU_Predictor:
         X_train, y_train = X_all[:-val_steps], y_all[:-val_steps]
         X_val, y_val = X_all[-val_steps:], y_all[-val_steps:]
 
-        # Compute feature range on training data (original units) for NMAE
+        # Compute range in original units for NMAE
         train_data = data[:train_fit_upto]
         feature_range = np.maximum(train_data.max(axis=0) - train_data.min(axis=0), 1e-9)
 
-        # Callback to print only percentage accuracy per epoch on validation set
         class ValPctAccCallback(tf.keras.callbacks.Callback):
-            def __init__(self, X_val, y_val, scaler, feature_range, val_steps):
+            def __init__(self, X_val, y_val, scaler, feature_range):
                 super().__init__()
                 self.X_val = X_val
                 self.y_val = y_val
                 self.scaler = scaler
                 self.feature_range = feature_range
-                self.val_steps = val_steps
 
             def on_epoch_end(self, epoch, logs=None):
                 y_pred_scaled = self.model.predict(self.X_val, verbose=0)
@@ -64,14 +62,14 @@ class SpeedCPU_Predictor:
                 acc_pct = max(0.0, 100.0 * (1.0 - nmae))
                 print(f"{acc_pct:.2f}%")
 
-        history = self.model.fit(
+        self.model.fit(
             X_train,
             y_train,
             validation_data=(X_val, y_val),
             epochs=epochs,
             batch_size=batch_size,
             verbose=0,
-            callbacks=[ValPctAccCallback(X_val, y_val, self.scaler, feature_range, val_steps)],
+            callbacks=[ValPctAccCallback(X_val, y_val, self.scaler, feature_range)],
         )
         self.is_trained = True
         return True
@@ -91,6 +89,8 @@ class SpeedCPU_Predictor:
         for _ in range(num_predictions):
             predicted_scaled = self.model.predict(current_input_sequence, verbose=0)
             predicted_values = self.scaler.inverse_transform(predicted_scaled)
-            predictions.append(predicted_values[0])
-            current_input_sequence = np.vstack([current_input_sequence[0][1:], predicted_scaled[0].reshape(1, -1)]).reshape(1, self.time_steps, self.num_features)
+            predictions.append(predicted_values[0][0])  # scalar speed
+            current_input_sequence = np.vstack(
+                [current_input_sequence[0][1:], predicted_scaled[0].reshape(1, -1)]
+            ).reshape(1, self.time_steps, self.num_features)
         return predictions

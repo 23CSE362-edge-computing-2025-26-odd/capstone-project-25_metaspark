@@ -24,16 +24,13 @@ class XYPredictor:
 
     def train(self, data, epochs=15, batch_size=1, val_steps=5, verbose=1):
         T = len(data)
-        # Need enough points for at least one training sample after holding out validation
         if T <= self.time_steps + val_steps:
             return False
 
-        # Fit scaler on training portion only (up to the start of validation region)
         train_fit_upto = T - val_steps
         self.scaler.fit(data[:train_fit_upto])
         scaled_data = self.scaler.transform(data)
 
-        # Create supervised dataset and split last `val_steps` samples for validation
         X_all, y_all = self._create_dataset(scaled_data)
         y_all = y_all.reshape(y_all.shape[0], self.num_features)
 
@@ -43,11 +40,9 @@ class XYPredictor:
         X_train, y_train = X_all[:-val_steps], y_all[:-val_steps]
         X_val, y_val = X_all[-val_steps:], y_all[-val_steps:]
 
-        # Compute feature range on training data (original units) for NMAE
         train_data = data[:train_fit_upto]
         feature_range = np.maximum(train_data.max(axis=0) - train_data.min(axis=0), 1e-9)
 
-        # Callback to print only percentage accuracy per epoch on validation set
         class ValPctAccCallback(tf.keras.callbacks.Callback):
             def __init__(self, X_val, y_val, scaler, feature_range, val_steps):
                 super().__init__()
@@ -64,7 +59,6 @@ class XYPredictor:
                 mae_per_feature = np.mean(np.abs(y_pred - y_true), axis=0)
                 nmae = float(np.mean(mae_per_feature / self.feature_range))
                 acc_pct = max(0.0, 100.0 * (1.0 - nmae))
-                # Print only the percentage for each epoch
                 print(f"{acc_pct:.2f}%")
 
         history = self.model.fit(

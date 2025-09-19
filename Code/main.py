@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import os
 from xy_predictor import XYPredictor
-from speed_predictor import SpeedPredictor  # changed: use speed-only predictor
+from speed_predictor import SpeedPredictor 
 
 DATA_FILE = 'vehicle_trace_2.csv'
 
@@ -16,7 +16,7 @@ def main():
     df = pd.read_csv(DATA_FILE)
     
     xy_predictors = {}
-    speed_predictors = {}  # changed: separate dict for speed-only models
+    speed_predictors = {} 
     
     all_predictions = []
 
@@ -26,16 +26,14 @@ def main():
         
         history = df[df['vehicle_id'] == vehicle_id]
         
-        # Train XY predictor (unchanged)
         xy_data = history[['x', 'y']].values
         xy_predictor = XYPredictor(num_time_steps)
         xy_predictors[vehicle_id] = xy_predictor
         if not xy_predictor.train(xy_data):
             print(f"  - Insufficient data for XY training for vehicle {vehicle_id}.")
         
-        # Train Speed predictor ONLY (leave cpu_capacity untouched)
-        speed_data = history[['speed']].values  # changed: single feature
-        speed_predictor = SpeedPredictor(num_time_steps)  # changed
+        speed_data = history[['speed']].values 
+        speed_predictor = SpeedPredictor(num_time_steps)  
         speed_predictors[vehicle_id] = speed_predictor
         if not speed_predictor.train(speed_data):
             print(f"  - Insufficient data for Speed training for vehicle {vehicle_id}.")

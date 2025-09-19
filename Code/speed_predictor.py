@@ -23,7 +23,6 @@ class SpeedPredictor:
         return model
 
     def train(self, data, epochs=15, batch_size=1, val_steps=5, verbose=1):
-        # data shape: (T, 1) for speed only
         T = len(data)
         if T <= self.time_steps + val_steps:
             return False
@@ -41,7 +40,6 @@ class SpeedPredictor:
         X_train, y_train = X_all[:-val_steps], y_all[:-val_steps]
         X_val, y_val = X_all[-val_steps:], y_all[-val_steps:]
 
-        # Compute range in original units for NMAE
         train_data = data[:train_fit_upto]
         feature_range = np.maximum(train_data.max(axis=0) - train_data.min(axis=0), 1e-9)
 
@@ -89,7 +87,7 @@ class SpeedPredictor:
         for _ in range(num_predictions):
             predicted_scaled = self.model.predict(current_input_sequence, verbose=0)
             predicted_values = self.scaler.inverse_transform(predicted_scaled)
-            predictions.append(predicted_values[0][0])  # scalar speed
+            predictions.append(predicted_values[0][0])  
             current_input_sequence = np.vstack(
                 [current_input_sequence[0][1:], predicted_scaled[0].reshape(1, -1)]
             ).reshape(1, self.time_steps, self.num_features)

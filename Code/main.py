@@ -3,7 +3,7 @@ import numpy as np
 import os
 import joblib
 from xy_predictor import XYPredictor
-from speed_cpu_predictor import SpeedCPU_Predictor
+from speed_predictor import Speed_Predictor
 
 DATA_FILE = 'sample_vehicle_trace.csv'
 
@@ -92,4 +92,5 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
+
         print(f"An error occurred: {e}")

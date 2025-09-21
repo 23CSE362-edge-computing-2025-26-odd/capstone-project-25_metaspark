@@ -1,7 +1,7 @@
 package org.fog.marina;
 
 public class VehicleState {
-    private static final double DEFAULT_CPU = 50.0; 
+    private static final double DEFAULT_CPU = 5.0; 
     private static final double DEFAULT_STORAGE = 100.0;
 
     private String id;
@@ -78,3 +78,4 @@ public class VehicleState {
                            + ", Cost=" + cost + "]");
     }
 }
+

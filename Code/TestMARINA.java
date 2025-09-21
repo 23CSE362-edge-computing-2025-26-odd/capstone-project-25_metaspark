@@ -7,7 +7,7 @@ import java.util.*;
 
 public class TestMARINA {
     public static void main(String[] args) {
-        String combinedFile = "dataset/sample_vehicle_trace.csv"; 
+        String combinedFile = "dataset/vehicle_trace_2.csv"; 
         List<VehicleState> allVehicles = TraceLoader.loadVehicleTrace(combinedFile);
         List<BaseStation> baseStations = new ArrayList<>();
         baseStations.add(new BaseStation("BS1", 100.0, 100.0, 50.0, 200.0, 250.0));
@@ -129,3 +129,4 @@ public class TestMARINA {
         return k - 1;
     }
 }
+

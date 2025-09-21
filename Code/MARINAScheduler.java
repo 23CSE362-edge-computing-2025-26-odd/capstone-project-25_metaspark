@@ -109,7 +109,7 @@ public class MARINAScheduler {
             }
         }
         for (Task t : paretoSet) {
-            System.out.println("[Drop] Task " + t.getId() + " missed deadline or capacity.");
+            System.out.println("Task " + t.getId() + " sent to cloud.");
         }
     }
 }

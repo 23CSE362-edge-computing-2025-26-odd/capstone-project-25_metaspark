@@ -2,114 +2,181 @@ package org.fog.placement;
 
 import org.fog.marina.*;
 import java.util.*;
+import java.util.stream.Collectors;
 
 public class MARINAScheduler {
 
     private List<VehicularCloud> vcs;
     private List<BaseStation> baseStations;
 
-    private double vehicleCost = 5.016;  
-    private double baseCost = 11.444;    
+    private double vehicleCost = 5.016;
+    private double baseCost = 11.444;
+    private final Random rand = new Random();
 
     public MARINAScheduler(List<VehicularCloud> vcs, List<BaseStation> baseStations) {
         this.vcs = vcs;
         this.baseStations = baseStations;
     }
-    private List<Task> paretoFilter(List<Task> tasks) {
-        List<Task> paretoSet = new ArrayList<>();
+
+    public void updateVcs(List<VehicularCloud> newVcs) {
+        this.vcs = newVcs;
+    }
+
+    public void releaseFinishedTasks(double currentTime) {
+        for (VehicularCloud vc : vcs) {
+            for (VehicleState v : vc.getVehicles())
+                v.releaseFinished(currentTime);
+            if (vc.getBaseStation() != null)
+                vc.getBaseStation().releaseFinished(currentTime);
+        }
+    }
+
+    private List<Task> paretoFilter(List<Task> tasks, List<VehicleState> vehicles) {
+        List<Task> pareto = new ArrayList<>();
         for (Task t1 : tasks) {
             boolean dominated = false;
             for (Task t2 : tasks) {
+                if (t2 == t1) continue;
                 if (t2.getDeadline() <= t1.getDeadline() && t2.getCpu() <= t1.getCpu()
                         && (t2.getDeadline() < t1.getDeadline() || t2.getCpu() < t1.getCpu())) {
                     dominated = true;
                     break;
                 }
             }
-            if (!dominated) paretoSet.add(t1);
+            if (!dominated) pareto.add(t1);
         }
-        return paretoSet;
-    }
 
-    private List<Task> binCovering(List<Task> tasks, double capacity) {
-        tasks.sort((a, b) -> Double.compare(b.getCpu(), a.getCpu()));
-        List<Task> selected = new ArrayList<>();
-        double used = 0;
-        for (Task task : tasks) {
-            if (used + task.getCpu() <= capacity) {
-                selected.add(task);
-                used += task.getCpu();
+        int minKeep = adaptiveKeepCount(tasks.size(), vehicles.size(), baseStations.size());
+
+        if (pareto.size() < minKeep) {
+            List<Task> fallback = new ArrayList<>(pareto);
+            List<Task> remaining = new ArrayList<>(tasks);
+            remaining.removeAll(pareto);
+            Collections.shuffle(remaining, rand);
+            while (fallback.size() < minKeep && !remaining.isEmpty()) {
+                fallback.add(remaining.remove(0));
             }
+            System.out.println("[Pareto] Kept " + fallback.size() + " tasks (with fallback).");
+            return fallback;
         }
-        return selected;
+
+        System.out.println("[Pareto] Kept " + pareto.size() + " tasks.");
+        return pareto;
     }
 
-    private double computeCost(Task task, boolean isBaseStation) {
-        return task.getCpu() * (isBaseStation ? baseCost : vehicleCost);
+    private int adaptiveKeepCount(int taskCount, int vehicleCount, int bsCount) {
+        int totalResources = Math.max(1, vehicleCount + bsCount);
+        int baseKeep = Math.max(5, (int) Math.round(taskCount * 0.1));
+        int randomBoost = rand.nextInt(Math.min(6, totalResources));
+        return Math.min(taskCount, baseKeep + randomBoost);
     }
 
     private boolean isVehicleStableForVC(VehicleState v, VehicularCloud vc) {
-
-        if (v.getPredictedSpeed() > 30.0) return false;
+        if (v.getPredictedSpeed() > 70.0) return false;
         if (vc.getBaseStation() != null) {
             double dx = v.getPredictedX() - vc.getBaseStation().getX();
             double dy = v.getPredictedY() - vc.getBaseStation().getY();
             double dist = Math.sqrt(dx * dx + dy * dy);
-            if (dist > vc.getBaseStation().getRange()) return false;
+            return dist <= vc.getBaseStation().getRange() * 1.5;
         }
         return true;
     }
 
-    public void schedule(List<Task> tasks, Map<String, Map<Integer,double[]>> predicted, double currentTime) {
-        List<Task> paretoSet = paretoFilter(tasks);
-        System.out.println("[Pareto] Kept " + paretoSet.size() + " tasks.");
+    private double computeCost(Task task, boolean isBaseStation) {
+        double processTime = 0.1; 
+        double price = isBaseStation ? baseCost : vehicleCost;
+        return processTime * task.getCpu() * price;
+    }
 
-        vcs.sort((a, b) -> Double.compare(b.totalCpu(), a.totalCpu()));
+    public void schedule(List<Task> tasks, Map<String, Map<Integer,double[]>> predicted, double currentTime) {
+        if (tasks == null || tasks.isEmpty()) return;
+
+        int vehicleCount = vcs.stream().mapToInt(vc -> vc.getVehicles().size()).sum();
+        System.out.println("[Tick " + (int) currentTime + "] Vehicles: " + vehicleCount + " | Tasks: " + tasks.size());
+
+        List<Task> paretoSet = paretoFilter(tasks,
+                vcs.stream().flatMap(vc -> vc.getVehicles().stream()).collect(Collectors.toList()));
+
+        List<String> assignedLogs = new ArrayList<>();
 
         for (VehicularCloud vc : vcs) {
             if (paretoSet.isEmpty()) break;
 
-            double vcCapacity = vc.totalCpu();
-            if (vcCapacity <= 0) continue;
+            vc.getVehicles().sort((v1, v2) -> Double.compare(v2.getAvailableCpu(), v1.getAvailableCpu()));
 
-            List<Task> chosen = binCovering(new ArrayList<>(paretoSet), vcCapacity);
-
-            for (Task t : new ArrayList<>(chosen)) {
+            for (Task t : new ArrayList<>(paretoSet)) {
                 boolean assigned = false;
-                vc.getVehicles().sort((v1, v2) -> Double.compare(v2.getCpuCapacity(), v1.getCpuCapacity()));
-                for (VehicleState v : vc.getVehicles()) {
-                    if (!v.isAvailable()) continue;
-                    if (!isVehicleStableForVC(v, vc)) continue;
-                    if (!v.canProcess(t)) continue;
 
-                    double finishTime = currentTime + (t.getCpu() / v.getCpuCapacity());
-                    if (finishTime <= t.getArrivalTime() + t.getDeadline()) {
-                        v.assignTask(t, currentTime);
-                        double cost = computeCost(t, false);
-                        System.out.println("  [Cost] Task " + t.getId() + " cost = " + cost);
-                        paretoSet.remove(t);
-                        chosen.remove(t);
-                        assigned = true;
-                        break;
-                    }
-                }
-                if (!assigned && vc.getBaseStation() != null) {
-                    BaseStation bs = vc.getBaseStation();
-                    if (bs.canProcess(t)) {
-                        double finishTime = currentTime + (t.getCpu() / bs.getCpuCapacity());
-                        if (finishTime <= t.getArrivalTime() + t.getDeadline()) {
-                            bs.assignTask(t, currentTime);
-                            double cost = computeCost(t, true);
-                            System.out.println("  [Cost] Task " + t.getId() + " cost = " + cost);
+                if (rand.nextDouble() < 0.7) {
+                    for (VehicleState v : vc.getVehicles()) {
+                        if (!isVehicleStableForVC(v, vc)) continue;
+                        if (!v.canProcess(t)) continue;
+
+                        double finishTime = currentTime + (t.getCpu() / v.getCpuCapacity());
+                        double deadline = t.getArrivalTime() + t.getDeadline();
+
+                        if (finishTime <= deadline) {
+                            v.assignTask(t, currentTime);
+                            double cost = computeCost(t, false);
+                            assignedLogs.add(String.format(
+                                "  [Assigned->Vehicle] %-22s -> %-12s [Finish=%.3f, Deadline=%.3f, CPU=%.3f, Cost=%.3f]",
+                                t.getId(), v.getId(), finishTime, deadline, t.getCpu(), cost
+                            ));
                             paretoSet.remove(t);
-                            chosen.remove(t);
+                            assigned = true;
+                            break;
                         }
                     }
                 }
+
+                if (!assigned && vc.getBaseStation() != null && vc.getBaseStation().canProcess(t)) {
+                    double finishTime = currentTime + (t.getCpu() / vc.getBaseStation().getCpuCapacity());
+                    double deadline = t.getArrivalTime() + t.getDeadline();
+
+                    if (finishTime <= deadline) {
+                        vc.getBaseStation().assignTask(t, currentTime);
+                        double cost = computeCost(t, true);
+                        assignedLogs.add(String.format(
+                            "  [Assigned->BS]      %-22s -> %-4s [Finish=%.3f, Deadline=%.3f, CPU=%.3f, Cost=%.3f]",
+                            t.getId(), vc.getBaseStation().getId(), finishTime, deadline, t.getCpu(), cost
+                        ));
+                        paretoSet.remove(t);
+                        assigned = true;
+                    }
+                }
+
+                if (!assigned) {
+                    for (VehicularCloud otherVc : vcs) {
+                        for (VehicleState v2 : otherVc.getVehicles()) {
+                            if (v2.canProcess(t)) {
+                                double finishTime = currentTime + (t.getCpu() / v2.getCpuCapacity());
+                                double deadline = t.getArrivalTime() + t.getDeadline();
+
+                                if (finishTime <= deadline) {
+                                    v2.assignTask(t, currentTime);
+                                    double cost = computeCost(t, false);
+                                    assignedLogs.add(String.format(
+                                        "  [Assigned->Vehicle] %-22s -> %-12s [Finish=%.3f, Deadline=%.3f, CPU=%.3f, Cost=%.3f]",
+                                        t.getId(), v2.getId(), finishTime, deadline, t.getCpu(), cost
+                                    ));
+                                    paretoSet.remove(t);
+                                    assigned = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (assigned) break;
+                    }
+                }
+
+                if (!assigned) {
+                    assignedLogs.add(String.format("  [CloudOffload] %-25s (no local fit)", t.getId()));
+                    paretoSet.remove(t);
+                }
             }
         }
-        for (Task t : paretoSet) {
-            System.out.println("Task " + t.getId() + " sent to cloud.");
-        }
+
+        assignedLogs.forEach(System.out::println);
+        System.out.println("-----------------------------------");
     }
 }

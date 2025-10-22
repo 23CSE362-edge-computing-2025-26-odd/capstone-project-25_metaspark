@@ -1,86 +1,103 @@
-import pandas as pd
-import numpy as np
 import os
+import pandas as pd
+import traci
+import time
 from xy_predictor import XYPredictor
-from speed_predictor import SpeedPredictor 
+from speed_predictor import SpeedPredictor
+import tempfile
 
-DATA_FILE = 'vehicle_trace_2.csv'
+SUMO_CMD = [
+    "sumo",
+    "-c", r"C:\Users\PRAVEEN\Downloads\Code\Code\cologne6to8.sumocfg"
+]
 
-def main():
-    if not os.path.exists(DATA_FILE):
-        raise FileNotFoundError(f"Error: The input CSV file '{DATA_FILE}' was not found.")
+OUTPUT_FILE = r"C:\Users\PRAVEEN\eclipse-workspace\iFogSim22\dataset\vehicle_trace_2.csv"
+PREDICT_EVERY = 3
+NUM_TIME_STEPS = 2
+MAX_EMPTY_TICKS = 50
 
-    num_time_steps = 2
-    num_predictions_to_make = 1  
-    
-    df = pd.read_csv(DATA_FILE)
-    
-    xy_predictors = {}
-    speed_predictors = {} 
-    
-    all_predictions = []
+os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
 
-    print(f"\n--- Training models for all vehicles from '{DATA_FILE}' ---")
-    for vehicle_id in df['vehicle_id'].unique():
-        print(f"Training models for vehicle {vehicle_id}...")
-        
-        history = df[df['vehicle_id'] == vehicle_id]
-        
-        xy_data = history[['x', 'y']].values
-        xy_predictor = XYPredictor(num_time_steps)
-        xy_predictors[vehicle_id] = xy_predictor
-        if not xy_predictor.train(xy_data):
-            print(f"  - Insufficient data for XY training for vehicle {vehicle_id}.")
-        
-        speed_data = history[['speed']].values 
-        speed_predictor = SpeedPredictor(num_time_steps)  
-        speed_predictors[vehicle_id] = speed_predictor
-        if not speed_predictor.train(speed_data):
-            print(f"  - Insufficient data for Speed training for vehicle {vehicle_id}.")
+print("Starting SUMO...")
+traci.start(SUMO_CMD)
 
-    for t_interval in range(1, num_predictions_to_make + 1):
-        
-        for vehicle_id in df['vehicle_id'].unique():
-            xy_predictor = xy_predictors.get(vehicle_id)
-            speed_predictor = speed_predictors.get(vehicle_id)
-            
-            history = df[df['vehicle_id'] == vehicle_id]
-            
-            xy_predictions = []
-            if xy_predictor and xy_predictor.is_trained:
-                last_xy_data = history[['x', 'y']].tail(num_time_steps).values
-                xy_predictions = xy_predictor.predict_next(last_xy_data, num_predictions=1)
-            
-            speed_predictions = []
-            if speed_predictor and speed_predictor.is_trained:
-                last_speed_data = history[['speed']].tail(num_time_steps).values
-                speed_predictions = speed_predictor.predict_next(last_speed_data, num_predictions=1)
-                
-            if xy_predictions and speed_predictions:
-                predicted_time = history['time'].max() + t_interval
-                
-                rounded_x = np.round(xy_predictions[0][0])
-                rounded_y = np.round(xy_predictions[0][1])
-                rounded_speed = np.round(speed_predictions[0])  
+history_df = pd.DataFrame(columns=["time","vehicle_id","x","y","speed","flag"])
+xy_models = {}
+speed_models = {}
 
-                prediction_dict = {
-                    'vehicle_id': vehicle_id,
-                    'time': predicted_time,
-                    'x': rounded_x,
-                    'y': rounded_y,
-                    'speed': rounded_speed,
-                }
-                all_predictions.append(prediction_dict)
+def collect_current(sim_time):
+    rows = []
+    for vid in traci.vehicle.getIDList():
+        x, y = traci.vehicle.getPosition(vid)
+        speed = traci.vehicle.getSpeed(vid)
+        rows.append([int(sim_time), vid, x, y, speed, 0])
+    if len(rows) == 0:
+        return pd.DataFrame(columns=history_df.columns)
+    return pd.DataFrame(rows, columns=history_df.columns)
 
-    if all_predictions:
-        predictions_df = pd.DataFrame(all_predictions)
-        combined_df = pd.concat([df, predictions_df], ignore_index=True)
-        combined_df.to_csv(DATA_FILE, index=False)
+def train_predict_and_build(sim_time, df):
+    all_preds = []
+    for vid in df['vehicle_id'].unique():
+        hist = df[df['vehicle_id'] == vid].sort_values('time')
+        if len(hist) < NUM_TIME_STEPS + 5:
+            continue
+        if vid not in xy_models:
+            m = XYPredictor(NUM_TIME_STEPS)
+            if m.train(hist[['x','y']].values):
+                xy_models[vid] = m
+        if vid not in speed_models:
+            s = SpeedPredictor(NUM_TIME_STEPS)
+            if s.train(hist[['speed']].values):
+                speed_models[vid] = s
+        if vid in xy_models and vid in speed_models:
+            xy_pred = xy_models[vid].predict_next(hist[['x','y']].tail(NUM_TIME_STEPS).values, num_predictions=1)
+            sp_pred = speed_models[vid].predict_next(hist[['speed']].tail(NUM_TIME_STEPS).values, num_predictions=1)
+            if xy_pred and sp_pred:
+                pred_time = int(sim_time) + 1
+                x_pred = float(xy_pred[0][0])
+                y_pred = float(xy_pred[0][1])
+                spred = float(sp_pred[0])
+                all_preds.append([pred_time, vid, x_pred, y_pred, spred, 1])
+                print(f"Predicted vehicle {vid} at time {pred_time}: x={x_pred:.2f}, y={y_pred:.2f}, speed={spred:.2f}")
+    if len(all_preds) > 0:
+        return pd.DataFrame(all_preds, columns=history_df.columns)
+    return pd.DataFrame(columns=history_df.columns)
+
+def atomic_write(df, out_path):
+    dirn = os.path.dirname(out_path)
+    fd, tmp = tempfile.mkstemp(dir=dirn, suffix=".tmp")
+    os.close(fd)
+    df.to_csv(tmp, index=False)
+    os.replace(tmp, out_path)
+
+print("Running simulation loop (live trace)...")
+empty_ticks = 0
+tick = 0
+
+while True:
+    traci.simulationStep()
+    sim_time = traci.simulation.getTime()
+    sim_time = int(sim_time)
+    vehicle_ids = traci.vehicle.getIDList()
+    print(f"Tick counter: {tick}, sim_time: {sim_time}, Vehicles: {len(vehicle_ids)}")
+    step_df = collect_current(sim_time)
+    if not step_df.empty:
+        history_df = pd.concat([history_df, step_df], ignore_index=True)
+        empty_ticks = 0
     else:
-        print("\nNo predictions were generated.")
+        empty_ticks += 1
+    if tick % PREDICT_EVERY == 0 and len(history_df) > NUM_TIME_STEPS:
+        preds_df = train_predict_and_build(sim_time, history_df)
+        if not preds_df.empty:
+            history_df = pd.concat([history_df, preds_df], ignore_index=True)
+            atomic_write(history_df, OUTPUT_FILE)
+            print("Wrote predictions to", OUTPUT_FILE)
+    if tick % 5 == 0:
+        atomic_write(history_df, OUTPUT_FILE)
+    tick += 1
+    if empty_ticks >= MAX_EMPTY_TICKS:
+        print(f"No vehicles for {MAX_EMPTY_TICKS} ticks. Ending simulation.")
+        break
 
-if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        print(f"An error occurred: {e}")
+traci.close()
+print("SUMO closed. Final trace saved at:", OUTPUT_FILE)

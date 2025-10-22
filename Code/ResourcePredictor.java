@@ -2,29 +2,38 @@ package org.fog.marina;
 
 import java.io.*;
 import java.util.*;
+import java.nio.file.*;
+
 
 public class ResourcePredictor {
-    public static Map<String, Map<Integer,double[]>> loadPredictions(String filePath) {
-        Map<String, Map<Integer,double[]>> predictions = new HashMap<>();
-        try (BufferedReader br = new BufferedReader(new FileReader(filePath))) {
-            String line = br.readLine();
-            while ((line = br.readLine()) != null) {
-                if (line.trim().isEmpty()) continue;
-                String[] parts = line.split(",");
-                if (parts.length >= 10 && parts[5].trim().equals("1")) {
-                    String vehicleId = parts[1].trim();
-                    int offset = Integer.parseInt(parts[6].trim());
-                    double predX = Double.parseDouble(parts[7].trim());
-                    double predY = Double.parseDouble(parts[8].trim());
-                    double predSpeed = Double.parseDouble(parts[9].trim());
 
-                    predictions.putIfAbsent(vehicleId, new HashMap<>());
-                    predictions.get(vehicleId).put(offset, new double[]{predX, predY, predSpeed});
+    public static Map<String, Map<Integer,double[]>> loadPredictions(String csvPath, int currentTime) {
+        Map<String, Map<Integer,double[]>> result = new HashMap<>();
+
+        if (!Files.exists(Paths.get(csvPath))) return result;
+
+        try (BufferedReader br = new BufferedReader(new FileReader(csvPath))) {
+            String line;
+            boolean first = true;
+            while ((line = br.readLine()) != null) {
+                if (first) { first = false; continue; } 
+                String[] p = line.split(",");
+                if (p.length < 6) continue;
+                int t = (int) Double.parseDouble(p[0]);
+                String vid = p[1];
+                double x = Double.parseDouble(p[2]);
+                double y = Double.parseDouble(p[3]);
+                double speed = Double.parseDouble(p[4]);
+                int flag = (int) Double.parseDouble(p[5]);
+                if (flag == 1 && t >= currentTime) {
+                    result.putIfAbsent(vid, new HashMap<>());
+                    result.get(vid).put(t - currentTime, new double[]{x, y, speed});
                 }
             }
-        } catch (IOException e) {
-            System.err.println("Warning: could not read predictions: " + e.getMessage());
+        } catch (Exception e) {
+            System.err.println("[Predictor] Error: " + e.getMessage());
         }
-        return predictions;
+
+        return result;
     }
 }
